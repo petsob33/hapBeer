@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import cz.sobtech.hapBeer.ui.screens.diagnostics.DiagnosticsScreen
 import cz.sobtech.hapBeer.ui.screens.eventdetail.EventDetailScreen
 import cz.sobtech.hapBeer.ui.screens.eventlist.EventListScreen
 import cz.sobtech.hapBeer.ui.screens.kegdetail.KegDetailScreen
@@ -14,6 +15,7 @@ import cz.sobtech.hapBeer.ui.screens.people.PeopleScreen
 private sealed class Screen(val route: String) {
     object EventList : Screen("event_list")
     object People : Screen("people")
+    object Diagnostics : Screen("diagnostics")
     object EventDetail : Screen("event_detail/{eventId}") {
         const val ARG = "eventId"
         fun createRoute(eventId: Long) = "event_detail/$eventId"
@@ -39,6 +41,9 @@ fun PivoNavGraph() {
                 },
                 onPeopleClick = {
                     navController.navigate(Screen.People.route)
+                },
+                onDiagnosticsClick = {
+                    navController.navigate(Screen.Diagnostics.route)
                 }
             )
         }
@@ -77,6 +82,10 @@ fun PivoNavGraph() {
                     navController.navigate(Screen.People.route)
                 }
             )
+        }
+
+        composable(Screen.Diagnostics.route) {
+            DiagnosticsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

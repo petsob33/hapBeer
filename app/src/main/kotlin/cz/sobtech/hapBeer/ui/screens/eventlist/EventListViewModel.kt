@@ -7,6 +7,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cz.sobtech.hapBeer.data.entity.EventEntity
 import cz.sobtech.hapBeer.data.repository.PivoRepository
+import cz.sobtech.hapBeer.ui.util.AppLogger
+import cz.sobtech.hapBeer.ui.util.LogLevel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -24,12 +26,14 @@ class EventListViewModel(private val repository: PivoRepository) : ViewModel() {
     fun addEvent(name: String, date: Long) {
         viewModelScope.launch {
             repository.insertEvent(EventEntity(name = name, date = date))
+            AppLogger.log(LogLevel.INFO, "Akce vytvořena: \"$name\"")
         }
     }
 
     fun deleteEvent(event: EventEntity) {
         viewModelScope.launch {
             repository.deleteEvent(event)
+            AppLogger.log(LogLevel.INFO, "Akce smazána: \"${event.name}\"")
         }
     }
 

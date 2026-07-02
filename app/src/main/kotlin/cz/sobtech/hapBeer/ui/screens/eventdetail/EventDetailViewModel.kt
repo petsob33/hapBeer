@@ -10,6 +10,8 @@ import cz.sobtech.hapBeer.data.entity.EventEntity
 import cz.sobtech.hapBeer.data.entity.KegEntity
 import cz.sobtech.hapBeer.data.entity.PersonEntity
 import cz.sobtech.hapBeer.data.repository.PivoRepository
+import cz.sobtech.hapBeer.ui.util.AppLogger
+import cz.sobtech.hapBeer.ui.util.LogLevel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -42,11 +44,15 @@ class EventDetailViewModel(
             repository.insertKeg(
                 KegEntity(eventId = eventId, name = name, price = price, sizeLiters = sizeLiters)
             )
+            AppLogger.log(LogLevel.INFO, "Bečka vytvořena: \"$name\" (akce ID:$eventId)")
         }
     }
 
     fun deleteKeg(keg: KegEntity) {
-        viewModelScope.launch { repository.deleteKeg(keg) }
+        viewModelScope.launch {
+            repository.deleteKeg(keg)
+            AppLogger.log(LogLevel.INFO, "Bečka smazána: \"${keg.name}\"")
+        }
     }
 
     companion object {

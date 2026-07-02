@@ -7,6 +7,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cz.sobtech.hapBeer.data.entity.PersonEntity
 import cz.sobtech.hapBeer.data.repository.PivoRepository
+import cz.sobtech.hapBeer.ui.util.AppLogger
+import cz.sobtech.hapBeer.ui.util.LogLevel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -20,11 +22,17 @@ class PeopleViewModel(private val repository: PivoRepository) : ViewModel() {
     fun addPerson(name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
-        viewModelScope.launch { repository.insertPerson(PersonEntity(name = trimmed)) }
+        viewModelScope.launch {
+            repository.insertPerson(PersonEntity(name = trimmed))
+            AppLogger.log(LogLevel.INFO, "Osoba přidána: \"$trimmed\"")
+        }
     }
 
     fun deletePerson(person: PersonEntity) {
-        viewModelScope.launch { repository.deletePerson(person) }
+        viewModelScope.launch {
+            repository.deletePerson(person)
+            AppLogger.log(LogLevel.INFO, "Osoba smazána: \"${person.name}\"")
+        }
     }
 
     companion object {

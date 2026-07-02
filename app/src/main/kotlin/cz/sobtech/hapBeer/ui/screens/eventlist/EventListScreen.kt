@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -70,6 +71,7 @@ private fun formatDate(millis: Long): String =
 fun EventListScreen(
     onEventClick: (Long) -> Unit,
     onPeopleClick: () -> Unit,
+    onDiagnosticsClick: () -> Unit,
     viewModel: EventListViewModel = viewModel(
         factory = EventListViewModel.provideFactory(
             (LocalContext.current.applicationContext as HapBeerApp).appContainer.pivoRepository
@@ -108,6 +110,9 @@ fun EventListScreen(
                 actions = {
                     IconButton(onClick = onPeopleClick) {
                         Icon(Icons.Default.Person, contentDescription = "Správa lidí")
+                    }
+                    IconButton(onClick = onDiagnosticsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "Diagnostika")
                     }
                 }
             )

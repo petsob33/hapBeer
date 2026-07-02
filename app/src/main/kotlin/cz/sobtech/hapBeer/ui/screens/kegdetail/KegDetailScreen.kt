@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import android.content.Intent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -94,6 +96,44 @@ private fun fmtPrice(price: Double): String {
 private fun fmtPricePerLiter(price: Double, sizeLiters: Double) =
     "${czFmt.format(price / sizeLiters)} Kč/l"
 
+private val czFmt0 = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ")).apply {
+    maximumFractionDigits = 0
+}
+
+private fun buildKegShareText(
+    kegName: String,
+    kegPrice: Double,
+    kegSizeLiters: Double,
+    totalBeers: Int,
+    consumed: Double,
+    remaining: Double,
+    sortedDrinkers: List<Pair<String, Int>>
+): String = buildString {
+    appendLine("🍺 $kegName – vyúčtování")
+    appendLine()
+    appendLine("Bečka: ${czFmt0.format(kegPrice.roundToInt())} Kč | ${czFmt.format(kegSizeLiters)} l")
+    if (totalBeers > 0) {
+        appendLine("Vypito: $totalBeers piv (${czFmt.format(consumed)} l)")
+        appendLine("Zbývá: ${czFmt.format(remaining)} l")
+        appendLine()
+        val pricePerBeer = kegPrice / totalBeers
+        val pricePerLiter = kegPrice / consumed
+        appendLine("Cena/pivo: ${czFmt0.format(pricePerBeer.roundToInt())} Kč")
+        appendLine("Cena/l (spotřeba): ${czFmt.format(pricePerLiter)} Kč/l")
+        appendLine()
+        appendLine("Kolik kdo zaplatí:")
+        sortedDrinkers.forEachIndexed { i, (name, count) ->
+            val owes = (count.toDouble() / totalBeers * kegPrice).roundToInt()
+            val medal = when (i) { 0 -> "🥇"; 1 -> "🥈"; 2 -> "🥉"; else -> "${i + 1}." }
+            appendLine("$medal $name – $count piv (${czFmt.format(count * LITERS_PER_BEER)} l) → ${czFmt0.format(owes)} Kč")
+        }
+    } else {
+        appendLine("Zatím nikdo nepil.")
+    }
+    appendLine()
+    append("Vygenerováno appkou Beer Counter")
+}
+
 // Jeden animovaný bublinový objekt; jeho progress (0→1) řídí pohyb a průhlednost.
 private class BubbleAnim(val xFrac: Float, val radiusDp: Float) {
     val progress = Animatable(0f)
@@ -116,6 +156,8 @@ fun KegDetailScreen(
         )
     )
 ) {
+    val context = LocalContext.current
+
     val keg by viewModel.keg.collectAsState()
     val allPeople by viewModel.allPeople.collectAsState()
     val beerCountsByPerson by viewModel.beerCountsByPerson.collectAsState()
@@ -236,6 +278,30 @@ fun KegDetailScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zpět")
                     }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        val sortedDrinkers = allPeople
+                            .filter { (beerCountsByPerson[it.id] ?: 0) > 0 }
+                            .sortedByDescending { beerCountsByPerson[it.id] ?: 0 }
+                            .map { it.name to (beerCountsByPerson[it.id] ?: 0) }
+                        val text = buildKegShareText(
+                            kegName = keg?.name ?: "",
+                            kegPrice = keg?.price ?: 0.0,
+                            kegSizeLiters = keg?.sizeLiters ?: 0.0,
+                            totalBeers = totalBeers,
+                            consumed = consumed,
+                            remaining = remaining,
+                            sortedDrinkers = sortedDrinkers
+                        )
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        context.startActivity(Intent.createChooser(intent, null))
+                    }) {
+                        Icon(Icons.Default.Share, contentDescription = "Sdílet vyúčtování")
+                    }
                 }
             )
         }
@@ -254,7 +320,9 @@ fun KegDetailScreen(
                     progressColor = progressColor,
                     situationalMsg = situationalMsg,
                     consumptionStats = consumptionStats,
-                    bubbleTrigger = bubbleTrigger
+                    bubbleTrigger = bubbleTrigger,
+                    totalBeers = totalBeers,
+                    consumed = consumed
                 )
             }
 
@@ -552,7 +620,9 @@ private fun KegProgressHeader(
     progressColor: Color,
     situationalMsg: String?,
     consumptionStats: KegConsumptionStats?,
-    bubbleTrigger: Int
+    bubbleTrigger: Int,
+    totalBeers: Int,
+    consumed: Double
 ) {
     Column {
         Row(
@@ -599,11 +669,24 @@ private fun KegProgressHeader(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = fmtPricePerLiter(keg.price, keg.sizeLiters),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                if (totalBeers > 0) {
+                    Text(
+                        text = "${czFmt0.format((keg.price / totalBeers).roundToInt())} Kč/pivo",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = fmtPricePerLiter(keg.price, consumed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = fmtPricePerLiter(keg.price, keg.sizeLiters),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 situationalMsg?.let { msg ->
                     Spacer(Modifier.height(6.dp))
                     Text(

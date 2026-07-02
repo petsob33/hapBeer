@@ -3,21 +3,26 @@ package cz.sobtech.hapBeer.ui.screens.eventdetail
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -52,6 +57,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -71,6 +77,7 @@ import cz.sobtech.hapBeer.ui.util.computePersonEventStats
 import cz.sobtech.hapBeer.ui.util.fmtLiters
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -122,8 +129,8 @@ private fun buildEventSummaryText(
         appendLine()
         if (leaderboard.isNotEmpty()) {
             appendLine("Žebříček:")
-            leaderboard.forEachIndexed { index, (person, count, _) ->
-                appendLine("${rankLabel(index + 1)} ${person.name} – $count piv (${fmtLiters(count * LITERS_PER_BEER)})")
+            leaderboard.forEachIndexed { index, (person, count, cost) ->
+                appendLine("${rankLabel(index + 1)} ${person.name} – $count piv (${fmtLiters(count * LITERS_PER_BEER)}) → ${czFmt0.format(cost)} Kč")
             }
             appendLine()
         }
@@ -518,6 +525,19 @@ private fun EventSummaryBottomSheet(
                     }
                 }
             }
+
+            // Graf spotřeby v čase
+            item { HorizontalDivider() }
+            item {
+                Text(
+                    "Spotřeba v čase",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            item {
+                HourlyBeerChart(records = eventRecords)
+            }
         }
     }
 }
@@ -605,5 +625,102 @@ private fun DeleteKegDialog(kegName: String, onDismiss: () -> Unit, onConfirm: (
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Zrušit") } }
+    )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Hourly beer chart
+// ═════════════════════════════════════════════════════════════════════════════
+
+private fun localHourOf(epochHour: Long): Int =
+    Calendar.getInstance().apply { timeInMillis = epochHour * 3_600_000L }.get(Calendar.HOUR_OF_DAY)
+
+@Composable
+private fun HourlyBeerChart(records: List<BeerRecordEntity>) {
+    if (records.isEmpty()) {
+        Text(
+            "Zatím není co zobrazit.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        return
+    }
+
+    val byEpochHour = records.groupingBy { it.timestamp / 3_600_000L }.eachCount()
+    val minH = byEpochHour.keys.min()
+    val maxH = byEpochHour.keys.max()
+    val hourData = (minH..maxH).map { h -> h to (byEpochHour[h] ?: 0) }
+    val maxCount = hourData.maxOf { it.second }.coerceAtLeast(1)
+    val peakEpochHour = hourData.maxByOrNull { it.second }?.first ?: minH
+    val peakCount = hourData.maxOf { it.second }
+
+    val beerColor = MaterialTheme.colorScheme.primary
+    val peakColor = MaterialTheme.colorScheme.tertiary
+
+    Row(
+        modifier = Modifier
+            .horizontalScroll(rememberScrollState())
+            .height(148.dp)
+    ) {
+        hourData.forEach { (epochHour, count) ->
+            val isPeak = epochHour == peakEpochHour
+            val localHour = localHourOf(epochHour)
+            val barFraction = count.toFloat() / maxCount
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(46.dp)
+                    .fillMaxHeight()
+            ) {
+                Box(
+                    modifier = Modifier.height(20.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    if (count > 0) {
+                        Text(
+                            count.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isPeak) peakColor else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 5.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    if (count > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(barFraction)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(if (isPeak) peakColor else beerColor)
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier.height(20.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Text(
+                        "${localHour}h",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isPeak) peakColor else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(6.dp))
+    val peakLocalHour = localHourOf(peakEpochHour)
+    Text(
+        "Nejvíc se pilo mezi ${peakLocalHour}:00 a ${(peakLocalHour + 1) % 24}:00 ($peakCount piv)",
+        style = MaterialTheme.typography.bodySmall,
+        color = peakColor
     )
 }

@@ -9,6 +9,8 @@ import cz.sobtech.hapBeer.data.entity.BeerRecordEntity
 import cz.sobtech.hapBeer.data.entity.KegEntity
 import cz.sobtech.hapBeer.data.entity.PersonEntity
 import cz.sobtech.hapBeer.data.repository.PivoRepository
+import cz.sobtech.hapBeer.ui.util.AppLogger
+import cz.sobtech.hapBeer.ui.util.LogLevel
 import cz.sobtech.hapBeer.ui.util.KegConsumptionStats
 import cz.sobtech.hapBeer.ui.util.computeKegConsumptionStats
 import kotlinx.coroutines.delay
@@ -85,12 +87,18 @@ class KegDetailViewModel(
                     timestamp = System.currentTimeMillis()
                 )
             )
+            val personName = allPeople.value.find { it.id == personId }?.name ?: "ID:$personId"
+            val kegName = keg.value?.name ?: "ID:$kegId"
+            AppLogger.log(LogLevel.INFO, "Pivo přidáno: $personName @ bečka \"$kegName\"")
         }
     }
 
     fun undoLastBeer(personId: Long) {
         viewModelScope.launch {
             repository.deleteLastBeerRecordForPersonInKeg(kegId, personId)
+            val personName = allPeople.value.find { it.id == personId }?.name ?: "ID:$personId"
+            val kegName = keg.value?.name ?: "ID:$kegId"
+            AppLogger.log(LogLevel.INFO, "Pivo odebráno: $personName @ bečka \"$kegName\"")
         }
     }
 
