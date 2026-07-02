@@ -1,5 +1,7 @@
 package cz.sobtech.hapBeer.ui.screens.kegdetail
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,7 +27,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -37,11 +39,20 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -50,12 +61,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cz.sobtech.hapBeer.HapBeerApp
 import cz.sobtech.hapBeer.data.entity.KegEntity
 import cz.sobtech.hapBeer.data.entity.PersonEntity
+import cz.sobtech.hapBeer.ui.util.FunnyMessages
+import cz.sobtech.hapBeer.ui.util.KegConsumptionStats
+import cz.sobtech.hapBeer.ui.util.LITERS_PER_BEER
+import cz.sobtech.hapBeer.ui.util.PersonDetailDialog
+import cz.sobtech.hapBeer.ui.util.computePersonEventStats
+import cz.sobtech.hapBeer.ui.util.fmtLiters
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
-
-private const val BEER_VOLUME_LITERS = 0.5
 
 private val czFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ")).apply {
     minimumFractionDigits = 2
@@ -92,24 +107,113 @@ fun KegDetailScreen(
     val keg by viewModel.keg.collectAsState()
     val allPeople by viewModel.allPeople.collectAsState()
     val beerCountsByPerson by viewModel.beerCountsByPerson.collectAsState()
+    val eventRecords by viewModel.eventRecords.collectAsState()
+    val eventKegs by viewModel.eventKegs.collectAsState()
+    val eventBeerCounts by viewModel.eventBeerCounts.collectAsState()
+    val consumptionStats by viewModel.consumptionStats.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    // ── Počítání naplnění ─────────────────────────────────────────────────────
+    var milestoneMsg by remember { mutableStateOf<String?>(null) }
+    var selectedPersonId by remember { mutableStateOf<Long?>(null) }
+    var pendingUndoPerson by remember { mutableStateOf<PersonEntity?>(null) }
+
+    // ── Výpočet naplnění ──────────────────────────────────────────────────────
     val totalBeers = beerCountsByPerson.values.sum()
-    val consumed = totalBeers * BEER_VOLUME_LITERS
+    val consumed = totalBeers * LITERS_PER_BEER
     val sizeLiters = keg?.sizeLiters ?: 1.0
     val remaining = (sizeLiters - consumed).coerceAtLeast(0.0)
     val fraction = (remaining / sizeLiters).toFloat().coerceIn(0f, 1f)
     val percentInt = (fraction * 100).roundToInt()
 
     val progressColor = when {
-        fraction > 0.5f -> Color(0xFF388E3C) // zelená – bečka plná
-        fraction > 0.2f -> Color(0xFFF57C00) // oranžová – ubývá
-        else -> MaterialTheme.colorScheme.error // červená – skoro prázdná
+        fraction > 0.5f -> Color(0xFF388E3C)
+        fraction > 0.2f -> Color(0xFFF57C00)
+        else -> MaterialTheme.colorScheme.error
     }
 
+    val situationalMsg = remember(percentInt) {
+        when {
+            percentInt == 0 -> FunnyMessages.pickRandom(FunnyMessages.BECKA_PRAZDNA)
+            percentInt < 20 -> FunnyMessages.pickRandom(FunnyMessages.BECKA_DOCHAZI)
+            else -> null
+        }
+    }
+
+    // ── Seřazený seznam osob + ranky ──────────────────────────────────────────
+    val sortedPeople = remember(allPeople, beerCountsByPerson) {
+        allPeople.sortedByDescending { beerCountsByPerson[it.id] ?: 0 }
+    }
+    val rankByPerson: Map<Long, Int> = remember(sortedPeople, beerCountsByPerson) {
+        val result = mutableMapOf<Long, Int>()
+        sortedPeople.forEachIndexed { index, person ->
+            val rank = if (index == 0) {
+                1
+            } else {
+                val prevCount = beerCountsByPerson[sortedPeople[index - 1].id] ?: 0
+                val currCount = beerCountsByPerson[person.id] ?: 0
+                if (currCount == prevCount) result[sortedPeople[index - 1].id]!! else index + 1
+            }
+            result[person.id] = rank
+        }
+        result
+    }
+    val drinkers = remember(sortedPeople, beerCountsByPerson) {
+        sortedPeople.filter { (beerCountsByPerson[it.id] ?: 0) > 0 }
+    }
+    val nonDrinkers = remember(sortedPeople, beerCountsByPerson) {
+        sortedPeople.filter { (beerCountsByPerson[it.id] ?: 0) == 0 }
+    }
+
+    // ── Dialogy ───────────────────────────────────────────────────────────────
+    milestoneMsg?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { milestoneMsg = null },
+            title = { Text("Milník!") },
+            text = { Text(msg, style = MaterialTheme.typography.bodyLarge) },
+            confirmButton = {
+                TextButton(onClick = { milestoneMsg = null }) { Text("Skvělé!") }
+            }
+        )
+    }
+
+    selectedPersonId?.let { pid ->
+        val stats = computePersonEventStats(
+            personId = pid,
+            allPeople = allPeople,
+            eventRecords = eventRecords,
+            eventKegs = eventKegs,
+            allPersonCounts = eventBeerCounts
+        )
+        if (stats != null) {
+            PersonDetailDialog(stats = stats, onDismiss = { selectedPersonId = null })
+        }
+    }
+
+    pendingUndoPerson?.let { person ->
+        AlertDialog(
+            onDismissRequest = { pendingUndoPerson = null },
+            title = { Text("Odebrat pivo?") },
+            text = {
+                Text(
+                    "Opravdu chceš odebrat poslední pivo osobě ${person.name} u této bečky?",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.undoLastBeer(person.id)
+                    pendingUndoPerson = null
+                }) { Text("Odebrat") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUndoPerson = null }) { Text("Zrušit") }
+            }
+        )
+    }
+
+    // ── Scaffold ──────────────────────────────────────────────────────────────
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -128,20 +232,20 @@ fun KegDetailScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // ── Grafický ukazatel naplnění ────────────────────────────────────
             keg?.let { k ->
                 KegProgressHeader(
                     keg = k,
                     remaining = remaining,
                     fraction = fraction,
                     percentInt = percentInt,
-                    progressColor = progressColor
+                    progressColor = progressColor,
+                    situationalMsg = situationalMsg,
+                    consumptionStats = consumptionStats
                 )
             }
 
             HorizontalDivider()
 
-            // ── Seznam lidí ───────────────────────────────────────────────────
             if (allPeople.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -163,9 +267,7 @@ fun KegDetailScreen(
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(onClick = onNavigateToPeople) {
-                            Text("Přidat lidi")
-                        }
+                        TextButton(onClick = onNavigateToPeople) { Text("Přidat lidi") }
                     }
                 }
             } else {
@@ -176,17 +278,62 @@ fun KegDetailScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(allPeople, key = { it.id }) { person ->
+                    items(drinkers, key = { it.id }) { person ->
                         val beerCount = beerCountsByPerson[person.id] ?: 0
+                        val rank = rankByPerson[person.id] ?: 1
                         PersonKegCard(
+                            rank = rank,
                             person = person,
                             beerCount = beerCount,
+                            onPersonClick = { selectedPersonId = person.id },
                             onRecordBeer = {
                                 val newCount = beerCount + 1
                                 viewModel.recordBeer(person.id)
+                                if (newCount % 5 == 0) {
+                                    milestoneMsg = FunnyMessages.milnikMessage(person.name, newCount)
+                                } else {
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = FunnyMessages.pickRandom(FunnyMessages.PO_PIVO),
+                                            actionLabel = "Zpět",
+                                            duration = SnackbarDuration.Short
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            viewModel.undoLastBeer(person.id)
+                                        }
+                                    }
+                                }
+                            },
+                            onUndoBeer = { pendingUndoPerson = person }
+                        )
+                    }
+
+                    if (nonDrinkers.isNotEmpty() && drinkers.isNotEmpty()) {
+                        item(key = "separator_no_beers") {
+                            Text(
+                                text = "Bez piva u této bečky",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, bottom = 2.dp)
+                            )
+                        }
+                    }
+
+                    items(nonDrinkers, key = { it.id }) { person ->
+                        val beerCount = 0
+                        val rank = rankByPerson[person.id] ?: (drinkers.size + 1)
+                        PersonKegCard(
+                            rank = rank,
+                            person = person,
+                            beerCount = beerCount,
+                            onPersonClick = { selectedPersonId = person.id },
+                            onRecordBeer = {
+                                viewModel.recordBeer(person.id)
                                 scope.launch {
                                     val result = snackbarHostState.showSnackbar(
-                                        message = "${person.name}: $newCount. pivo zapsáno",
+                                        message = FunnyMessages.pickRandom(FunnyMessages.PO_PIVO),
                                         actionLabel = "Zpět",
                                         duration = SnackbarDuration.Short
                                     )
@@ -195,7 +342,7 @@ fun KegDetailScreen(
                                     }
                                 }
                             },
-                            onUndoBeer = { viewModel.undoLastBeer(person.id) }
+                            onUndoBeer = { pendingUndoPerson = person }
                         )
                     }
                 }
@@ -205,7 +352,135 @@ fun KegDetailScreen(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Ukazatel naplnění
+// Vertikální ukazatel stavu bečky
+// ═════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun VerticalKegIndicator(
+    fraction: Float,
+    modifier: Modifier = Modifier
+) {
+    val beerColor = MaterialTheme.colorScheme.primary
+    val foamColor = MaterialTheme.colorScheme.tertiary
+    val woodColor = MaterialTheme.colorScheme.secondary
+    val emptyColor = MaterialTheme.colorScheme.surfaceVariant
+
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val cr = 14.dp.toPx()
+        val strokeW = 3.5f.dp.toPx()
+
+        drawRoundRect(color = emptyColor, cornerRadius = CornerRadius(cr))
+
+        if (fraction > 0f) {
+            val fillH = h * fraction
+            val fillTop = h - fillH
+            val foamH = (10.dp.toPx()).coerceAtMost(fillH * 0.12f).coerceAtLeast(3.dp.toPx())
+
+            val clipPath = Path().apply {
+                addRoundRect(RoundRect(0f, 0f, w, h, cr, cr))
+            }
+            clipPath(clipPath) {
+                drawRect(
+                    color = beerColor,
+                    topLeft = Offset(0f, fillTop + foamH),
+                    size = Size(w, (fillH - foamH).coerceAtLeast(0f))
+                )
+                drawRect(
+                    color = foamColor,
+                    topLeft = Offset(0f, fillTop),
+                    size = Size(w, foamH)
+                )
+            }
+        }
+
+        drawRoundRect(
+            color = woodColor,
+            cornerRadius = CornerRadius(cr),
+            style = Stroke(width = strokeW)
+        )
+
+        val ringColor = woodColor.copy(alpha = 0.22f)
+        val ringW = 2.dp.toPx()
+        listOf(0.3f, 0.7f).forEach { pos ->
+            drawLine(
+                color = ringColor,
+                start = Offset(strokeW, h * pos),
+                end = Offset(w - strokeW, h * pos),
+                strokeWidth = ringW
+            )
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Statistiky spotřeby bečky
+// ═════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun KegConsumptionStatsPanel(
+    stats: KegConsumptionStats,
+    modifier: Modifier = Modifier
+) {
+    val hasRecords = stats.avgLitersPerHour > 0.0
+
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                text = "Spotřeba bečky",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Za posledních 60 min: ${stats.lastHourBeers} piv (${fmtLiters(stats.lastHourLiters)})",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (hasRecords) {
+                Text(
+                    text = "Průměr: ${czFmt.format(stats.avgLitersPerHour)} l/hod",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                val est = stats.estimatedHoursRemaining
+                if (est != null) {
+                    val h = est.toInt()
+                    val min = ((est - h) * 60).roundToInt()
+                    Text(
+                        text = "Vydrží ještě přibližně ${h} h ${min} min",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = "Nelze odhadnout",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Text(
+                    text = "Zatím se nepilo",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Hlavička bečky s vertikálním ukazatelem
 // ═════════════════════════════════════════════════════════════════════════════
 
 @Composable
@@ -214,75 +489,79 @@ private fun KegProgressHeader(
     remaining: Double,
     fraction: Float,
     percentInt: Int,
-    progressColor: Color
+    progressColor: Color,
+    situationalMsg: String?,
+    consumptionStats: KegConsumptionStats?
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        // Cena, objem, cena/l
+    Column {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                "${czFmt.format(keg.sizeLiters)} l",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                fmtPrice(keg.price),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                fmtPricePerLiter(keg.price, keg.sizeLiters),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        // "Zbývá X,XX l z Y,YY l (Z %)"
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Text(
-                text = "Zbývá ${czFmt.format(remaining)} l z ${czFmt.format(keg.sizeLiters)} l",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "$percentInt %",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = progressColor
-            )
-        }
-
-        // Progress bar
-        LinearProgressIndicator(
-            progress = { fraction },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(14.dp),
-            color = progressColor,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            VerticalKegIndicator(
+                fraction = fraction,
+                modifier = Modifier
+                    .width(110.dp)
+                    .height(220.dp)
+            )
 
-        // Prázdná bečka
-        if (fraction == 0f) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "Bečka je prázdná",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
+            Spacer(Modifier.width(18.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Zbývá",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = czFmt.format(remaining) + " l",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "z ${czFmt.format(keg.sizeLiters)} l",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "$percentInt %",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = progressColor
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = fmtPrice(keg.price),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = fmtPricePerLiter(keg.price, keg.sizeLiters),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                situationalMsg?.let { msg ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (fraction == 0f) MaterialTheme.colorScheme.error
+                                else Color(0xFFF57C00)
+                    )
+                }
+            }
+        }
+
+        if (consumptionStats != null && remaining > 0.0) {
+            KegConsumptionStatsPanel(
+                stats = consumptionStats,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 10.dp)
             )
         }
     }
@@ -294,8 +573,10 @@ private fun KegProgressHeader(
 
 @Composable
 private fun PersonKegCard(
+    rank: Int,
     person: PersonEntity,
     beerCount: Int,
+    onPersonClick: () -> Unit,
     onRecordBeer: () -> Unit,
     onUndoBeer: () -> Unit
 ) {
@@ -310,9 +591,18 @@ private fun PersonKegCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
+                text = "$rank.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(28.dp)
+            )
+
+            Text(
                 text = person.name,
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onPersonClick)
             )
 
             TextButton(

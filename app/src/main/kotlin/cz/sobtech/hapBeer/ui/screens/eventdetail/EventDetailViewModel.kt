@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import cz.sobtech.hapBeer.data.entity.BeerRecordEntity
 import cz.sobtech.hapBeer.data.entity.EventEntity
 import cz.sobtech.hapBeer.data.entity.KegEntity
 import cz.sobtech.hapBeer.data.entity.PersonEntity
@@ -25,13 +26,16 @@ class EventDetailViewModel(
     val kegs: StateFlow<List<KegEntity>> = repository.getKegsForEvent(eventId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Všichni globální lidé – pro EventSummaryBottomSheet (překlad personId → jméno). */
     val allPeople: StateFlow<List<PersonEntity>> = repository.allPeople
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** personId → celkový počet piv v akci (přes všechny bečky) – pro EventSummaryBottomSheet. */
+    /** personId → celkový počet piv v akci (přes všechny bečky). */
     val beerCounts: StateFlow<Map<Long, Int>> = repository.getBeerCountsForEvent(eventId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    /** Surové záznamy pro výpočet statistik (timestampy, rozpad po bečkách). */
+    val eventRecords: StateFlow<List<BeerRecordEntity>> = repository.getRecordsForEvent(eventId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun addKeg(name: String, price: Double, sizeLiters: Double) {
         viewModelScope.launch {

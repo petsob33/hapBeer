@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -49,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -58,8 +60,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cz.sobtech.hapBeer.HapBeerApp
 import cz.sobtech.hapBeer.R
+import cz.sobtech.hapBeer.data.entity.BeerRecordEntity
 import cz.sobtech.hapBeer.data.entity.KegEntity
 import cz.sobtech.hapBeer.data.entity.PersonEntity
+import cz.sobtech.hapBeer.ui.util.LITERS_PER_BEER
+import cz.sobtech.hapBeer.ui.util.PersonDetailDialog
+import cz.sobtech.hapBeer.ui.util.computePersonEventStats
+import cz.sobtech.hapBeer.ui.util.fmtLiters
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -71,11 +78,29 @@ private val czFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ"
 private val czFmt0 = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ")).apply {
     maximumFractionDigits = 0
 }
+private val czFmt1 = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ")).apply {
+    minimumFractionDigits = 1
+    maximumFractionDigits = 1
+}
 
 private fun fmtPrice(price: Double) = "${czFmt.format(price)} Kč"
 private fun fmtPriceInt(price: Double) = "${czFmt0.format(price.roundToInt())} Kč"
 private fun fmtPricePerLiter(price: Double, sizeLiters: Double) =
     "${czFmt.format(price / sizeLiters)} Kč/l"
+
+private fun rankLabel(rank: Int): String = when (rank) {
+    1 -> "🥇"
+    2 -> "🥈"
+    3 -> "🥉"
+    else -> "${rank}."
+}
+
+private fun rankColor(rank: Int): Color? = when (rank) {
+    1 -> Color(0xFFFFD700)
+    2 -> Color(0xFFA8A9AD)
+    3 -> Color(0xFFCD7F32)
+    else -> null
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // EventDetailScreen
@@ -98,12 +123,11 @@ fun EventDetailScreen(
     val kegs by viewModel.kegs.collectAsState()
     val allPeople by viewModel.allPeople.collectAsState()
     val beerCounts by viewModel.beerCounts.collectAsState()
+    val eventRecords by viewModel.eventRecords.collectAsState()
 
     var showAddKegDialog by remember { mutableStateOf(false) }
     var kegToDelete by remember { mutableStateOf<KegEntity?>(null) }
     var showSummary by remember { mutableStateOf(false) }
-
-    // ── Dialogy ──────────────────────────────────────────────────────────────
 
     if (showAddKegDialog) {
         AddKegDialog(
@@ -123,20 +147,18 @@ fun EventDetailScreen(
         )
     }
 
-    // ── Souhrn akce ──────────────────────────────────────────────────────────
-
     if (showSummary) {
         val peopleThatDrank = allPeople.filter { (beerCounts[it.id] ?: 0) > 0 }
         EventSummaryBottomSheet(
             eventName = event?.name ?: "",
+            allPeople = allPeople,
             people = peopleThatDrank,
             beerCounts = beerCounts,
             kegs = kegs,
+            eventRecords = eventRecords,
             onDismiss = { showSummary = false }
         )
     }
-
-    // ── Scaffold ──────────────────────────────────────────────────────────────
 
     Scaffold(
         topBar = {
@@ -282,13 +304,17 @@ private fun SwipeableKegCard(keg: KegEntity, onClick: () -> Unit, onDeleteReques
 @Composable
 private fun EventSummaryBottomSheet(
     eventName: String,
+    allPeople: List<PersonEntity>,
     people: List<PersonEntity>,
     beerCounts: Map<Long, Int>,
     kegs: List<KegEntity>,
+    eventRecords: List<BeerRecordEntity>,
     onDismiss: () -> Unit
 ) {
     val totalCost = kegs.sumOf { it.price }
     val totalBeers = beerCounts.values.sum()
+    val totalLiters = totalBeers * LITERS_PER_BEER
+    val avgPerPerson = if (people.isNotEmpty()) totalBeers.toDouble() / people.size else 0.0
 
     val leaderboard = people
         .map { person ->
@@ -299,6 +325,21 @@ private fun EventSummaryBottomSheet(
             Triple(person, count, cost)
         }
         .sortedByDescending { it.second }
+
+    var selectedPersonId by remember { mutableStateOf<Long?>(null) }
+
+    selectedPersonId?.let { pid ->
+        val stats = computePersonEventStats(
+            personId = pid,
+            allPeople = allPeople,
+            eventRecords = eventRecords,
+            eventKegs = kegs,
+            allPersonCounts = beerCounts
+        )
+        if (stats != null) {
+            PersonDetailDialog(stats = stats, onDismiss = { selectedPersonId = null })
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -311,6 +352,7 @@ private fun EventSummaryBottomSheet(
             contentPadding = PaddingValues(bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Nadpis
             item {
                 Text(
                     "Souhrn – $eventName",
@@ -321,62 +363,92 @@ private fun EventSummaryBottomSheet(
 
             item { HorizontalDivider() }
 
+            // Celkové statistiky
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     SummaryCell("Celkem piv", "$totalBeers")
-                    SummaryCell("Útrata za bečky", fmtPriceInt(totalCost), alignEnd = true)
+                    SummaryCell("Celkem litrů", fmtLiters(totalLiters))
+                    SummaryCell("Útrata", fmtPriceInt(totalCost), alignEnd = true)
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SummaryCell(
+                        label = "Průměr/os.",
+                        value = "${czFmt1.format(avgPerPerson)} piv"
+                    )
+                    SummaryCell(
+                        label = "Osob",
+                        value = "${people.size}",
+                        alignEnd = true
+                    )
                 }
             }
 
+            // Žebříček
             if (leaderboard.isNotEmpty()) {
                 item { HorizontalDivider() }
                 item {
-                    Text("Žebříček a útrata", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "Útrata je počítána podle podílu vypitých piv.",
+                        "Žebříček",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Útrata podle podílu vypitých piv. Klikni na jméno pro detail.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                items(leaderboard.size) { index ->
-                    val (person, count, cost) = leaderboard[index]
+                itemsIndexed(leaderboard) { index, (person, count, cost) ->
+                    val rank = index + 1
+                    val color = rankColor(rank)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedPersonId = person.id }
+                            .padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Pořadí + jméno
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text(
-                                "${index + 1}.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.widthIn(min = 26.dp)
+                                text = rankLabel(rank),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = color ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.widthIn(min = 32.dp)
                             )
-                            Text(person.name, style = MaterialTheme.typography.bodyLarge)
-                        }
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
                             Text(
-                                "$count piv",
+                                text = person.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (rank <= 3) FontWeight.SemiBold else FontWeight.Normal,
+                                color = color ?: MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        // Počet piv + litry + cena
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "$count piv · ${fmtLiters(count * LITERS_PER_BEER)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                "$cost Kč",
+                                text = "$cost Kč",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.widthIn(min = 76.dp),
-                                textAlign = TextAlign.End
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }

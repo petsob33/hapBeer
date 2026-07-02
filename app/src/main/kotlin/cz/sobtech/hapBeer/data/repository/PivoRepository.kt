@@ -64,6 +64,9 @@ class PivoRepository(
         beerRecordDao.getRecordsForKeg(kegId)
             .map { records -> records.groupingBy { it.personId }.eachCount() }
 
+    fun getRecordsForEvent(eventId: Long): Flow<List<BeerRecordEntity>> =
+        beerRecordDao.getRecordsForEvent(eventId)
+
     /** personId → celkový počet piv v rámci akce (přes všechny bečky). */
     fun getBeerCountsForEvent(eventId: Long): Flow<Map<Long, Int>> =
         beerRecordDao.getRecordsForEvent(eventId)
