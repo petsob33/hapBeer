@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- mug body outline (white) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M29,32 L79,32 L73,88 L35,88 Z"/>
+
+    <!-- handle (white) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M79,46 L85,46 Q97,46 97,60 Q97,74 85,74 L79,74 L79,66 L85,66 Q89,66 89,60 Q89,54 85,54 L79,54 Z"/>
+
+    <!-- beer interior (amber) -->
+    <path
+        android:fillColor="#FFA000"
+        android:pathData="M33,54 L75,54 L73,88 L35,88 Z"/>
+
+    <!-- foam (cream/white) -->
+    <path
+        android:fillColor="#FFF9C4"
+        android:pathData="M26,22 Q54,12 82,22 L79,36 Q54,26 29,36 Z"/>
+
+    <!-- foam layer bottom edge -->
+    <path
+        android:fillColor="#FFFDE7"
+        android:pathData="M29,36 L79,36 L79,56 Q54,46 29,56 Z"/>
+
+    <!-- bubbles inside beer (small circles) -->
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M48,68 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M60,76 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"/>
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M54,62 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"/>
+</vector>
