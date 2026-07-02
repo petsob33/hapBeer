@@ -1,5 +1,8 @@
 package cz.sobtech.hapBeer.ui.screens.kegdetail
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,8 +40,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +77,7 @@ import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 private val czFmt = NumberFormat.getNumberInstance(Locale.forLanguageTag("cs-CZ")).apply {
     minimumFractionDigits = 2
@@ -86,6 +93,11 @@ private fun fmtPrice(price: Double): String {
 
 private fun fmtPricePerLiter(price: Double, sizeLiters: Double) =
     "${czFmt.format(price / sizeLiters)} Kč/l"
+
+// Jeden animovaný bublinový objekt; jeho progress (0→1) řídí pohyb a průhlednost.
+private class BubbleAnim(val xFrac: Float, val radiusDp: Float) {
+    val progress = Animatable(0f)
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // KegDetailScreen
@@ -118,6 +130,7 @@ fun KegDetailScreen(
     var milestoneMsg by remember { mutableStateOf<String?>(null) }
     var selectedPersonId by remember { mutableStateOf<Long?>(null) }
     var pendingUndoPerson by remember { mutableStateOf<PersonEntity?>(null) }
+    var bubbleTrigger by remember { mutableIntStateOf(0) }
 
     // ── Výpočet naplnění ──────────────────────────────────────────────────────
     val totalBeers = beerCountsByPerson.values.sum()
@@ -240,7 +253,8 @@ fun KegDetailScreen(
                     percentInt = percentInt,
                     progressColor = progressColor,
                     situationalMsg = situationalMsg,
-                    consumptionStats = consumptionStats
+                    consumptionStats = consumptionStats,
+                    bubbleTrigger = bubbleTrigger
                 )
             }
 
@@ -289,6 +303,7 @@ fun KegDetailScreen(
                             onRecordBeer = {
                                 val newCount = beerCount + 1
                                 viewModel.recordBeer(person.id)
+                                bubbleTrigger++
                                 if (newCount % 5 == 0) {
                                     milestoneMsg = FunnyMessages.milnikMessage(person.name, newCount)
                                 } else {
@@ -331,6 +346,7 @@ fun KegDetailScreen(
                             onPersonClick = { selectedPersonId = person.id },
                             onRecordBeer = {
                                 viewModel.recordBeer(person.id)
+                                bubbleTrigger++
                                 scope.launch {
                                     val result = snackbarHostState.showSnackbar(
                                         message = FunnyMessages.pickRandom(FunnyMessages.PO_PIVO),
@@ -352,18 +368,51 @@ fun KegDetailScreen(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Vertikální ukazatel stavu bečky
+// Vertikální ukazatel stavu bečky s animací bublinek
 // ═════════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun VerticalKegIndicator(
     fraction: Float,
+    bubbleTrigger: Int,
     modifier: Modifier = Modifier
 ) {
     val beerColor = MaterialTheme.colorScheme.primary
     val foamColor = MaterialTheme.colorScheme.tertiary
     val woodColor = MaterialTheme.colorScheme.secondary
     val emptyColor = MaterialTheme.colorScheme.surfaceVariant
+
+    val bubbles = remember { mutableStateListOf<BubbleAnim>() }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(bubbleTrigger) {
+        if (bubbleTrigger == 0) return@LaunchedEffect
+        val newBubbles = (0 until 4).map {
+            BubbleAnim(
+                xFrac = Random.nextFloat() * 0.65f + 0.17f,
+                radiusDp = Random.nextFloat() * 5f + 3f
+            )
+        }
+        bubbles.addAll(newBubbles)
+        scope.launch {
+            try {
+                val jobs = newBubbles.map { bubble ->
+                    launch {
+                        bubble.progress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(
+                                durationMillis = 500 + Random.nextInt(400),
+                                easing = LinearEasing
+                            )
+                        )
+                    }
+                }
+                jobs.forEach { it.join() }
+            } finally {
+                newBubbles.forEach { bubbles.remove(it) }
+            }
+        }
+    }
 
     Canvas(modifier = modifier) {
         val w = size.width
@@ -392,6 +441,17 @@ private fun VerticalKegIndicator(
                     topLeft = Offset(0f, fillTop),
                     size = Size(w, foamH)
                 )
+                bubbles.forEach { bubble ->
+                    val prog = bubble.progress.value
+                    val bx = w * bubble.xFrac
+                    val by = h - prog * (fillH - foamH)
+                    val r = bubble.radiusDp.dp.toPx()
+                    drawCircle(
+                        color = Color.White.copy(alpha = (1f - prog) * 0.65f),
+                        radius = r,
+                        center = Offset(bx, by)
+                    )
+                }
             }
         }
 
@@ -491,7 +551,8 @@ private fun KegProgressHeader(
     percentInt: Int,
     progressColor: Color,
     situationalMsg: String?,
-    consumptionStats: KegConsumptionStats?
+    consumptionStats: KegConsumptionStats?,
+    bubbleTrigger: Int
 ) {
     Column {
         Row(
@@ -502,6 +563,7 @@ private fun KegProgressHeader(
         ) {
             VerticalKegIndicator(
                 fraction = fraction,
+                bubbleTrigger = bubbleTrigger,
                 modifier = Modifier
                     .width(110.dp)
                     .height(220.dp)

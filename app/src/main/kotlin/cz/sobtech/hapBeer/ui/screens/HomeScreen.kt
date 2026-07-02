@@ -22,7 +22,7 @@ fun HomeScreen() {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Pivní počítadlo",
+                text = "Beer Counter",
                 style = MaterialTheme.typography.headlineMedium
             )
         }

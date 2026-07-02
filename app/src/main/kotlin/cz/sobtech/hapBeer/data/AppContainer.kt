@@ -3,7 +3,6 @@ package cz.sobtech.hapBeer.data
 import android.app.Application
 import cz.sobtech.hapBeer.data.database.AppDatabase
 import cz.sobtech.hapBeer.data.repository.PivoRepository
-
 class AppContainer(application: Application) {
     val database: AppDatabase by lazy { AppDatabase.getInstance(application) }
 

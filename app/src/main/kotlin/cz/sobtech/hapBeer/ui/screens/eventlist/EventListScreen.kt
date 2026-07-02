@@ -104,7 +104,7 @@ fun EventListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pivní počítadlo") },
+                title = { Text("Beer Counter") },
                 actions = {
                     IconButton(onClick = onPeopleClick) {
                         Icon(Icons.Default.Person, contentDescription = "Správa lidí")

@@ -1,5 +1,6 @@
 package cz.sobtech.hapBeer.ui.screens.eventdetail
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,6 +70,8 @@ import cz.sobtech.hapBeer.ui.util.PersonDetailDialog
 import cz.sobtech.hapBeer.ui.util.computePersonEventStats
 import cz.sobtech.hapBeer.ui.util.fmtLiters
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -100,6 +104,35 @@ private fun rankColor(rank: Int): Color? = when (rank) {
     2 -> Color(0xFFA8A9AD)
     3 -> Color(0xFFCD7F32)
     else -> null
+}
+
+private fun buildEventSummaryText(
+    eventName: String,
+    eventDate: Long,
+    leaderboard: List<Triple<PersonEntity, Int, Int>>,
+    totalBeers: Int,
+    totalLiters: Double,
+    totalCost: Double,
+    avgPerPerson: Double
+): String {
+    val dateFmt = SimpleDateFormat("d. M. yyyy", Locale.forLanguageTag("cs-CZ"))
+    return buildString {
+        appendLine("🍺 $eventName – souhrn")
+        appendLine("📅 ${dateFmt.format(Date(eventDate))}")
+        appendLine()
+        if (leaderboard.isNotEmpty()) {
+            appendLine("Žebříček:")
+            leaderboard.forEachIndexed { index, (person, count, _) ->
+                appendLine("${rankLabel(index + 1)} ${person.name} – $count piv (${fmtLiters(count * LITERS_PER_BEER)})")
+            }
+            appendLine()
+        }
+        appendLine("Celkem vypito: $totalBeers piv (${fmtLiters(totalLiters)})")
+        appendLine("Celková útrata: ${czFmt0.format(totalCost.roundToInt())} Kč")
+        appendLine("Průměr na osobu: ${czFmt1.format(avgPerPerson)} piv")
+        appendLine()
+        append("Vygenerováno appkou Beer Counter")
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -151,6 +184,7 @@ fun EventDetailScreen(
         val peopleThatDrank = allPeople.filter { (beerCounts[it.id] ?: 0) > 0 }
         EventSummaryBottomSheet(
             eventName = event?.name ?: "",
+            eventDate = event?.date ?: 0L,
             allPeople = allPeople,
             people = peopleThatDrank,
             beerCounts = beerCounts,
@@ -304,6 +338,7 @@ private fun SwipeableKegCard(keg: KegEntity, onClick: () -> Unit, onDeleteReques
 @Composable
 private fun EventSummaryBottomSheet(
     eventName: String,
+    eventDate: Long,
     allPeople: List<PersonEntity>,
     people: List<PersonEntity>,
     beerCounts: Map<Long, Int>,
@@ -311,6 +346,7 @@ private fun EventSummaryBottomSheet(
     eventRecords: List<BeerRecordEntity>,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val totalCost = kegs.sumOf { it.price }
     val totalBeers = beerCounts.values.sum()
     val totalLiters = totalBeers * LITERS_PER_BEER
@@ -352,13 +388,41 @@ private fun EventSummaryBottomSheet(
             contentPadding = PaddingValues(bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Nadpis
+            // Nadpis + tlačítko sdílení
             item {
-                Text(
-                    "Souhrn – $eventName",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Souhrn – $eventName",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = {
+                        val shareText = buildEventSummaryText(
+                            eventName = eventName,
+                            eventDate = eventDate,
+                            leaderboard = leaderboard,
+                            totalBeers = totalBeers,
+                            totalLiters = totalLiters,
+                            totalCost = totalCost,
+                            avgPerPerson = avgPerPerson
+                        )
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                        }
+                        context.startActivity(Intent.createChooser(intent, null))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Sdílet souhrn"
+                        )
+                    }
+                }
             }
 
             item { HorizontalDivider() }
